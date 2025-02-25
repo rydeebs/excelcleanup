@@ -704,3 +704,4 @@ with tab4:
         
         with col_csv:
             # Create a download button for CSV
+            csv = st.session_
