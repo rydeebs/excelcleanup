@@ -354,8 +354,8 @@ def extract_city(address_text, country):
     
     for pattern in city_indicator_patterns:
         match = re.search(pattern, address_text, re.I)
-        if match:
-            return match[1].strip()
+        if match and match.group(1):
+            return match.group(1).strip()
     
     # Special case for "Medellin - Colombia" pattern as in the example
     special_pattern = r'\b([A-Z][a-zA-Z]+)\s*-\s*[A-Za-z]+\b'
