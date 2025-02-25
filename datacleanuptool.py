@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import requests
 from io import BytesIO
 import base64
 from urllib.parse import urlparse
@@ -55,9 +56,51 @@ def validate_and_correct_email(email, country, website):
     if not domain and email and "@" in email and "." in email:
         domain = email.split("@")[1].strip().lower()
     
-    # If still no domain, use default
+    # If still no domain, use country TLD or default
     if not domain:
-        domain = 'domain.com'
+        country_tlds = {
+            'Chile': 'domain.cl',
+            'Brazil': 'domain.br',
+            'Argentina': 'domain.ar',
+            'Colombia': 'domain.co',
+            'Mexico': 'domain.mx',
+            'Peru': 'domain.pe',
+            'Ecuador': 'domain.ec',
+            'Venezuela': 'domain.ve',
+            'Uruguay': 'domain.uy',
+            'Paraguay': 'domain.py',
+            'Bolivia': 'domain.bo',
+            'Costa Rica': 'domain.cr',
+            'Panama': 'domain.pa',
+            'Guatemala': 'domain.gt',
+            'El Salvador': 'domain.sv',
+            'Honduras': 'domain.hn',
+            'Nicaragua': 'domain.ni',
+            'Dominican Republic': 'domain.do',
+            'Jamaica': 'domain.jm',
+            'Trinidad and Tobago': 'domain.tt',
+            'Canada': 'domain.ca',
+            'United Kingdom': 'domain.uk',
+            'Australia': 'domain.au',
+            'New Zealand': 'domain.nz',
+            'Singapore': 'domain.sg',
+            'South Korea': 'domain.kr',
+            'Japan': 'domain.jp',
+            'Israel': 'domain.il',
+            'South Africa': 'domain.za',
+            'Morocco': 'domain.ma',
+            'Egypt': 'domain.eg',
+            'Turkey': 'domain.tr',
+            'United Arab Emirates': 'domain.ae',
+            'Saudi Arabia': 'domain.sa',
+            'Qatar': 'domain.qa',
+            'Kuwait': 'domain.kw',
+            'Bahrain': 'domain.bh',
+            'Oman': 'domain.om',
+            'Jordan': 'domain.jo',
+        }
+        
+        domain = country_tlds.get(country, 'domain.com') if country else 'domain.com'
     
     # Construct the email
     return f"{username}@{domain}"
@@ -299,7 +342,20 @@ def extract_city(address_text, country):
         if match:
             return match.group(0).strip()
     
-    # If no match with known cities, try pattern matching
+    # If no match with known cities, try some heuristics
+    
+    # Look for patterns like "City: X" or "X, City" or "City of X"
+    city_indicator_patterns = [
+        r'\bCity:\s*([A-Z][a-zA-Z\s]+)(?=[\s,;]|$)',
+        r'\b([A-Z][a-zA-Z\s]+),\s*(?:City|Town|Village|Municipality)(?=[\s,;]|$)',
+        r'\b(?:City|Town|Village|Municipality)\s+of\s+([A-Z][a-zA-Z\s]+)(?=[\s,;]|$)',
+        r'\b([A-Z][a-zA-Z\s]+)(?=\s*-\s*(?:Colombia|Mexico|Brazil|Chile|Argentina|Peru|Ecuador|Venezuela|Uruguay|Paraguay|Bolivia|Panama|Guatemala|El Salvador|Honduras|Nicaragua|Dominican Republic|Jamaica|Trinidad|Canada|Australia|New Zealand|Singapore|South Korea|Japan|Israel|South Africa|Morocco|Egypt|Turkey|UAE|Saudi Arabia|Qatar|Kuwait|Bahrain|Oman|Jordan|UK))(?=[\s,;]|$)'
+    ]
+    
+    for pattern in city_indicator_patterns:
+        match = re.search(pattern, address_text, re.I)
+        if match and match.group(1):
+            return match.group(1).strip()
     
     # Special case for "Medellin - Colombia" pattern as in the example
     special_pattern = r'\b([A-Z][a-zA-Z]+)\s*-\s*[A-Za-z]+\b'
@@ -317,7 +373,7 @@ def extract_city(address_text, country):
             continue
         
         # Check if it's capitalized and not a street type or direction
-        if (part and part[0].isupper() and
+        if (part[0].isupper() and
             not re.match(r'^(St|Ave|Rd|Blvd|Ln|Dr|Ct|Plz|Sq|Hwy|Rt|North|South|East|West|NE|NW|SE|SW)$', part, re.I) and
             not re.match(r'^\d+$', part)):  # Not just numbers
             candidates.append(part)
@@ -329,7 +385,7 @@ def extract_city(address_text, country):
     
     return ""
 
-# Function to extract logo from website
+# Function to extract logo from website using Clearbit API
 def extract_logo_from_website(website):
     if not website:
         return ""
@@ -341,125 +397,53 @@ def extract_logo_from_website(website):
         domain = re.sub(r'^www\.', '', domain, flags=re.I)
         domain = domain.split('/')[0]
         
-        # Use Clearbit's logo API
+        # Use Clearbit's logo API - this is a free service with generous limits
         return f"https://logo.clearbit.com/{domain}"
+        
+        # In a real implementation with web scraping, you would do:
+        """
+        # Make request to the website
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        }
+        
+        response = requests.get(f"https://{domain}", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Look for img tags with class="logo"
+            logo_pattern = r'<img[^>]*(?:class=["'][^"']*logo[^"']*["']|alt=["'][^"']*logo[^"']*["'])[^>]*src=["']([^"']+)["'][^>]*>'
+            match = re.search(logo_pattern, response.text, re.I)
+            
+            if match and match.group(1):
+                logo_url = match.group(1)
+                
+                # Handle relative URLs
+                if logo_url.startswith('/'):
+                    logo_url = f"https://{domain}{logo_url}"
+                
+                return logo_url
+        
+        return f"https://logo.clearbit.com/{domain}"  # Fallback to Clearbit
+        """
     
     except Exception as e:
         st.error(f"Error extracting logo: {str(e)}")
         return f"https://via.placeholder.com/150?text=Error"
 
-# Function to validate and correct geographic coordinates based on country
-def validate_coordinates(latitude, longitude, country):
-    # Dictionary of country bounding boxes (approximate min/max lat/lon)
-    # Format: [min_lat, max_lat, min_lon, max_lon]
-    country_bounds = {
-        'Colombia': [1.0, 12.5, -79.0, -67.0],
-        'Mexico': [14.5, 32.7, -118.4, -86.7],
-        'Brazil': [-33.8, 5.3, -73.9, -34.8],
-        'Chile': [-55.9, -17.5, -80.0, -66.0],
-        'Argentina': [-55.0, -21.8, -73.6, -53.6],
-        'Peru': [-18.4, -0.0, -81.4, -68.7],
-        'Ecuador': [-5.0, 1.8, -81.0, -75.0],
-        'Venezuela': [0.6, 12.2, -73.4, -59.8],
-        'Canada': [42.0, 83.0, -141.0, -52.0],
-        'United States': [24.5, 49.5, -125.0, -66.0],
-        'United Kingdom': [49.9, 59.5, -8.6, 1.8],
-        'Australia': [-43.6, -10.6, 113.1, 153.6],
-        'Japan': [30.4, 45.5, 130.9, 145.8],
-        'South Korea': [33.1, 38.6, 125.9, 129.6],
-        'China': [18.2, 53.6, 73.5, 134.8],
-        'India': [6.7, 35.5, 68.1, 97.4],
-        'South Africa': [-34.8, -22.1, 16.5, 32.9],
-        'Egypt': [22.0, 31.7, 24.7, 36.9],
-        'Morocco': [27.7, 35.9, -13.2, -1.0],
-        'Saudi Arabia': [16.3, 32.2, 34.5, 55.7],
-        'United Arab Emirates': [22.6, 26.1, 51.5, 56.4],
-        'Turkey': [35.8, 42.1, 26.0, 44.8],
-        'Germany': [47.3, 55.1, 5.9, 15.0],
-        'France': [41.3, 51.1, -5.1, 9.6],
-        'Italy': [36.6, 47.1, 6.6, 18.5],
-        'Spain': [36.0, 43.8, -9.4, 3.4],
-        'Netherlands': [50.8, 53.5, 3.3, 7.2],
-        'Russia': [41.2, 81.9, 19.6, 180.0],
-        'Costa Rica': [8.0, 11.2, -85.9, -82.5],
-        'Panama': [7.2, 9.6, -83.0, -77.2],
-        'Guatemala': [13.7, 17.8, -92.2, -88.2],
-        'El Salvador': [13.2, 14.5, -90.1, -87.7],
-        'Honduras': [12.9, 16.5, -89.4, -83.1],
-        'Nicaragua': [10.7, 15.0, -87.7, -83.1],
-        'Dominican Republic': [17.5, 19.9, -72.0, -68.3],
-        'Jamaica': [17.7, 18.5, -78.4, -76.2],
-        'Trinidad and Tobago': [10.0, 11.4, -61.9, -60.5]
-    }
-    
-    try:
-        # Parse coordinates to float
-        lat = float(latitude) if isinstance(latitude, str) else latitude
-        lon = float(longitude) if isinstance(longitude, str) else longitude
-        
-        # Check if the country exists in our database
-        if country not in country_bounds:
-            # If country not in database, return the original coordinates
-            return lat, lon
-        
-        bounds = country_bounds[country]
-        min_lat, max_lat, min_lon, max_lon = bounds
-        
-        # Check if coordinates are within country bounds
-        if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
-            # Coordinates are already valid
-            return lat, lon
-        else:
-            # Generate valid coordinates within the country bounds
-            valid_lat = min_lat + (max_lat - min_lat) * random.random()
-            valid_lon = min_lon + (max_lon - min_lon) * random.random()
-            
-            # Round to 6 decimal places
-            valid_lat = round(valid_lat, 6)
-            valid_lon = round(valid_lon, 6)
-            
-            return valid_lat, valid_lon
-    
-    except (ValueError, TypeError):
-        # If coordinates are invalid or can't be parsed, generate random ones for the country
-        if country in country_bounds:
-            bounds = country_bounds[country]
-            min_lat, max_lat, min_lon, max_lon = bounds
-            
-            valid_lat = min_lat + (max_lat - min_lat) * random.random()
-            valid_lon = min_lon + (max_lon - min_lon) * random.random()
-            
-            # Round to 6 decimal places
-            valid_lat = round(valid_lat, 6)
-            valid_lon = round(valid_lon, 6)
-            
-            return valid_lat, valid_lon
-        else:
-            # Default fallback if country is unknown
-            return 0.0, 0.0
-
 # Main app layout
 st.title("Data Cleanup and Enhancement Tool")
 
-# Create tabs
-tab1, tab2, tab3, tab4 = st.tabs(["1. Upload File", "2. Configure Columns", "3. Process Data", "4. Results & Export"])
-
-# Store state
+# Initialize session state variables if they don't exist
+if 'step' not in st.session_state:
+    st.session_state.step = 1  # Current step in the process
 if 'data' not in st.session_state:
-    st.session_state.data = None
-if 'processed_data' not in st.session_state:
-    st.session_state.processed_data = None
-if 'column_mappings' not in st.session_state:
-    st.session_state.column_mappings = {
-        'email': '',
-        'website': '',
-        'address': '',
-        'city': '',
-        'country': '',
-        'logo': '',
-        'latitude': '',
-        'longitude': ''
-    }
+    st.session_state.data = None  # DataFrame to store the data
+if 'processed' not in st.session_state:
+    st.session_state.processed = False  # Flag to indicate if data has been processed
+
+# Create tabs for the different steps
+tab1, tab2, tab3, tab4 = st.tabs(["1. Upload File", "2. Configure Columns", "3. Process Data", "4. Results & Export"])
 
 # File Upload Tab
 with tab1:
@@ -477,6 +461,7 @@ with tab1:
                 data = pd.read_excel(uploaded_file)
             
             st.session_state.data = data
+            st.session_state.step = 2  # Move to next step
             
             st.success(f"File '{uploaded_file.name}' uploaded successfully!")
             st.write(f"Found {len(data.columns)} columns and {len(data)} rows.")
@@ -485,7 +470,10 @@ with tab1:
             st.subheader("Data Preview")
             st.dataframe(data.head())
             
-            st.info("You can now proceed to the 'Configure Columns' tab")
+            # Button to navigate to next step
+            if st.button("Next: Configure Columns"):
+                st.session_state.step = 2
+                st.experimental_rerun()
         
         except Exception as e:
             st.error(f"Error reading file: {str(e)}")
@@ -495,6 +483,17 @@ with tab2:
     if st.session_state.data is not None:
         st.header("Configure Column Mappings")
         st.write("Select which columns in your data correspond to each field:")
+        
+        # Initialize column mappings if they don't exist
+        if 'column_mappings' not in st.session_state:
+            st.session_state.column_mappings = {
+                'email': '',
+                'website': '',
+                'address': '',
+                'city': '',
+                'country': '',
+                'logo': ''
+            }
         
         # Create two columns for the form layout
         col1, col2 = st.columns(2)
@@ -521,13 +520,6 @@ with tab2:
                 index=0 if not st.session_state.column_mappings['country'] else 
                       list([''] + list(st.session_state.data.columns)).index(st.session_state.column_mappings['country'])
             )
-            
-            st.session_state.column_mappings['latitude'] = st.selectbox(
-                "Latitude Column:",
-                options=[''] + list(st.session_state.data.columns),
-                index=0 if not st.session_state.column_mappings['latitude'] else 
-                      list([''] + list(st.session_state.data.columns)).index(st.session_state.column_mappings['latitude'])
-            )
         
         with col2:
             st.session_state.column_mappings['website'] = st.selectbox(
@@ -550,22 +542,25 @@ with tab2:
                 index=0 if not st.session_state.column_mappings['logo'] else 
                       list([''] + list(st.session_state.data.columns)).index(st.session_state.column_mappings['logo'])
             )
-            
-            st.session_state.column_mappings['longitude'] = st.selectbox(
-                "Longitude Column:",
-                options=[''] + list(st.session_state.data.columns),
-                index=0 if not st.session_state.column_mappings['longitude'] else 
-                      list([''] + list(st.session_state.data.columns)).index(st.session_state.column_mappings['longitude'])
-            )
         
-        st.info("After selecting your columns, proceed to the 'Process Data' tab")
+        # Navigation buttons
+        col_back, col_next = st.columns([1, 1])
         
+        with col_back:
+            if st.button("Back"):
+                st.session_state.step = 1
+                st.experimental_rerun()
+        
+        with col_next:
+            if st.button("Next: Process Data"):
+                st.session_state.step = 3
+                st.experimental_rerun()
     else:
         st.info("Please upload a file in the previous step.")
 
 # Process Data Tab
 with tab3:
-    if st.session_state.data is not None:
+    if st.session_state.data is not None and all(field in st.session_state.column_mappings for field in ['email', 'website', 'address', 'city', 'country', 'logo']):
         st.header("Process Data")
         
         # Show selected configuration
@@ -594,9 +589,6 @@ with tab3:
         
         if st.session_state.column_mappings['logo'] and st.session_state.column_mappings['website']:
             tasks_text += f"- Extract company logos from websites and update column \"{st.session_state.column_mappings['logo']}\"\n"
-            
-        if st.session_state.column_mappings['latitude'] and st.session_state.column_mappings['longitude'] and st.session_state.column_mappings['country']:
-            tasks_text += f"- Validate and correct geographic coordinates for column \"{st.session_state.column_mappings['latitude']}\" and \"{st.session_state.column_mappings['longitude']}\"\n"
         
         if tasks_text:
             st.markdown(tasks_text)
@@ -657,45 +649,46 @@ with tab3:
                         website_value = str(row[website_col]) if pd.notna(row[website_col]) else ""
                         processed_data.at[idx, logo_col] = extract_logo_from_website(website_value)
                     
-                    # Validate and correct coordinates if columns selected
-                    lat_col = st.session_state.column_mappings['latitude']
-                    lon_col = st.session_state.column_mappings['longitude']
-                    if lat_col and lon_col and country_col:
-                        lat_value = row[lat_col] if pd.notna(row[lat_col]) else 0
-                        lon_value = row[lon_col] if pd.notna(row[lon_col]) else 0
-                        country_value = str(row[country_col]) if pd.notna(row[country_col]) else ""
-                        
-                        valid_lat, valid_lon = validate_coordinates(lat_value, lon_value, country_value)
-                        processed_data.at[idx, lat_col] = valid_lat
-                        processed_data.at[idx, lon_col] = valid_lon
-                    
-                    # Small delay to make progress visible
+                    # Add a small delay to make progress visible
                     time.sleep(0.01)
                 
                 # Update session state with processed data
-                st.session_state.processed_data = processed_data
+                st.session_state.data = processed_data
+                st.session_state.processed = True
                 
                 # Complete progress bar
                 progress_bar.progress(1.0)
                 status_text.text("Processing complete!")
                 
                 # Success message
-                st.success("Data processing completed successfully! Go to the Results tab to view and export your data.")
+                st.success("Data processing completed successfully!")
+                
+                # Move to results tab
+                st.session_state.step = 4
+                st.experimental_rerun()
+        
+        # Navigation buttons
+        col_back, _ = st.columns([1, 1])
+        
+        with col_back:
+            if st.button("Back to Configure"):
+                st.session_state.step = 2
+                st.experimental_rerun()
     
     else:
         st.info("Please upload a file and configure columns in the previous steps.")
 
 # Results & Export Tab
 with tab4:
-    if st.session_state.processed_data is not None:
+    if st.session_state.processed and st.session_state.data is not None:
         st.header("Results & Export")
         
         # Display the processed data
         st.subheader("Processed Data Preview")
-        st.dataframe(st.session_state.processed_data.head(10))
+        st.dataframe(st.session_state.data.head(10))
         
-        if len(st.session_state.processed_data) > 10:
-            st.info(f"Showing 10 of {len(st.session_state.processed_data)} rows. Export to view all data.")
+        if len(st.session_state.data) > 10:
+            st.info(f"Showing 10 of {len(st.session_state.data)} rows. Export to view all data.")
         
         # Export options
         st.subheader("Export Options")
@@ -704,4 +697,63 @@ with tab4:
         
         with col_csv:
             # Create a download button for CSV
-            csv = st.session_
+            csv = st.session_state.data.to_csv(index=False)
+            b64_csv = base64.b64encode(csv.encode()).decode()
+            href_csv = f'<a href="data:file/csv;base64,{b64_csv}" download="processed_data.csv" class="btn">Download CSV File</a>'
+            st.markdown(href_csv, unsafe_allow_html=True)
+        
+        with col_excel:
+            # Create a download button for Excel
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                st.session_state.data.to_excel(writer, index=False, sheet_name='Processed Data')
+            
+            buffer.seek(0)
+            b64_excel = base64.b64encode(buffer.read()).decode()
+            href_excel = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_excel}" download="processed_data.xlsx" class="btn">Download Excel File</a>'
+            st.markdown(href_excel, unsafe_allow_html=True)
+        
+        # Navigation button
+        if st.button("Process Another File"):
+            # Reset session state
+            st.session_state.data = None
+            st.session_state.processed = False
+            st.session_state.step = 1
+            if 'column_mappings' in st.session_state:
+                del st.session_state.column_mappings
+            
+            st.experimental_rerun()
+    
+    else:
+        st.info("Please process data in the previous step.")
+
+# Highlight the current step
+if st.session_state.step == 1:
+    tab1.title("1. Upload File")
+elif st.session_state.step == 2:
+    tab2.title("2. Configure Columns")
+elif st.session_state.step == 3:
+    tab3.title("3. Process Data")
+elif st.session_state.step == 4:
+    tab4.title("4. Results & Export")
+
+# Add CSS for better styling
+st.markdown("""
+<style>
+    .btn {
+        display: inline-block;
+        padding: 0.5em 1em;
+        background-color: #4CAF50;
+        color: white;
+        text-align: center;
+        text-decoration: none;
+        font-size: 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 4px 2px;
+    }
+    .btn:hover {
+        background-color: #45a049;
+    }
+</style>
+""", unsafe_allow_html=True)
